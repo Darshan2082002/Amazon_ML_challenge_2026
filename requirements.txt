@@ -7,6 +7,6 @@ seaborn>=0.11.0
 #thefuzz[speedup]
 jellyfish
 #textdistance
-
-
-# ML Rockers
+#blockingpy
+#sentence-transformers
+#faiss-cpu
