@@ -1,0 +1,44 @@
+Environments
+venv/
+env/
+.env
+.venv/
+pypackages/
+
+Byte-compiled / optimized / DLL files
+pycache/
+*.py[cod]
+*$py.class
+
+Data and output files (Important for ML projects)
+*.csv
+*.tsv
+*.dat
+*.parquet
+*.db
+*.sqlite
+candidate_pairs.tsv
+
+Jupyter Notebook
+.ipynb_checkpoints/
+
+IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+ehthumbs_vista.db
+
+Distribution / packaging
+build/
+dist/
+*.egg-info/

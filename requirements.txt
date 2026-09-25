@@ -1,6 +1,7 @@
 pandas>=1.3.0
 matplotlib>=3.4.0
 seaborn>=0.11.0
+<<<<<<< HEAD
 #recordlinkage
 #splink
 #dedupe
@@ -10,3 +11,14 @@ jellyfish
 #blockingpy
 #sentence-transformers
 #faiss-cpu
+=======
+recordlinkage
+splink
+dedupe
+thefuzz[speedup]
+jellyfish
+textdistance
+blockingpy
+sentence-transformers
+faiss-cpu
+>>>>>>> main
