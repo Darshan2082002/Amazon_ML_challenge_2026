@@ -7,28 +7,35 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from preprocessing.preprocess import preprocess_source_data
 
 def generate_candidate_pairs(df_s1, df_s2, df_s3):
-    """Generates a baseline block using Country + First 4 chars of the cleaned name."""
+    """Generates a strict block using Country + First Word of Name + First Word of Address."""
     
+    # Helper to extract the first word safely
+    def get_first_word(series):
+        return series.str.split().str[0].fillna("")
+
     # Filter out empty records before creating keys
     df_s1 = df_s1[(df_s1['name_clean'] != "") & (df_s1['country'] != "")]
     df_s2 = df_s2[(df_s2['name_clean'] != "") & (df_s2['country'] != "")]
     df_s3 = df_s3[(df_s3['name_clean'] != "") & (df_s3['country'] != "")]
 
-    # Create baseline blocking keys
-    df_s1['block_key'] = df_s1['country'] + "_" + df_s1['name_clean'].str[:4]
-    df_s2['block_key'] = df_s2['country'] + "_" + df_s2['name_clean'].str[:4]
-    df_s3['block_key'] = df_s3['country'] + "_" + df_s3['name_clean'].str[:4]
+    # Create stricter blocking keys to prevent memory explosion
+    df_s1['block_key'] = df_s1['country'] + "_" + get_first_word(df_s1['name_clean']) + "_" + get_first_word(df_s1['address_clean'])
+    df_s2['block_key'] = df_s2['country'] + "_" + get_first_word(df_s2['name_clean']) + "_" + get_first_word(df_s2['address_clean'])
+    df_s3['block_key'] = df_s3['country'] + "_" + get_first_word(df_s3['name_clean']) + "_" + get_first_word(df_s3['address_clean'])
     
-    # Merge candidates on the blocking key
+    print("Merging Source 1 and Source 2...")
     candidates_s2 = df_s1[['entity_id', 'block_key']].merge(
         df_s2[['entity_id', 'block_key']], on='block_key', suffixes=('_s1', '_cand')
     )
+    
+    print("Merging Source 1 and Source 3...")
     candidates_s3 = df_s1[['entity_id', 'block_key']].merge(
         df_s3[['entity_id', 'block_key']], on='block_key', suffixes=('_s1', '_cand')
     )
     
     all_candidates = pd.concat([candidates_s2, candidates_s3])
     
+    print("Formatting output...")
     # Group and sort for reproducible output
     candidate_pairs = all_candidates.groupby('entity_id_s1')['entity_id_cand'].apply(
         lambda x: ','.join(sorted(set(x)))
