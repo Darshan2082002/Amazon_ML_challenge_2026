@@ -46,9 +46,9 @@ def generate_candidate_pairs(df_s1, df_s2, df_s3):
 
 if __name__ == "__main__":
     # Adjust these paths to match your local setup if necessary
-    path_s1 = r"D:\Amazon_ML_challenge_2026\data\student_resource\dataset\train\train_source1.tsv"
-    path_s2 = r"D:\Amazon_ML_challenge_2026\data\student_resource\dataset\train\train_source2.tsv"
-    path_s3 = r"D:\Amazon_ML_challenge_2026\data\student_resource\dataset\train\train_source3.tsv"
+    path_s1 = r"data\student_resource\dataset\train\train_source1.tsv"
+    path_s2 = r"data\student_resource\dataset\train\train_source2.tsv"
+    path_s3 = r"data\student_resource\dataset\train\train_source3.tsv"
 
     print("Loading data...")
     df_s1 = pd.read_csv(path_s1, sep="\t", dtype=str)
