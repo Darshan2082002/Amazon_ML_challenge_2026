@@ -861,18 +861,18 @@ The project is considered complete when:
 
 ### Data
 
--   [ ] All three sources load correctly
--   [ ] Ground truth loads correctly
--   [ ] Missing values are handled
--   [ ] Data normalization is documented
+-   [y] All three sources load correctly
+-   [y] Ground truth loads correctly
+-   [y] Missing values are handled
+-   [y] Data normalization is documented
 
 ### Blocking
 
--   [ ] Candidate generation works
--   [ ] `candidate_pairs.tsv` is generated
--   [ ] Blocking recall is calculated
--   [ ] Reduction ratio is calculated
--   [ ] Blocking strategy is documented
+-   [y] Candidate generation works
+-   [y] `candidate_pairs.tsv` is generated
+-   [y] Blocking recall is calculated
+-   [y] Reduction ratio is calculated
+-   [y] Blocking strategy is documented
 
 ### Matching
 
