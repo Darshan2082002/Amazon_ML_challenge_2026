@@ -44,6 +44,6 @@ if __name__ == "__main__":
     TOTAL_S3 = 10000 
     
     candidate_file = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'output', 'candidate_pairs.tsv'))
-    gt_file = r"D:\Amazon_ML_challenge_2026\data\student_resource\dataset\train\train_ground_truth.tsv"
+    gt_file = r"data\student_resource\dataset\train\train_ground_truth.tsv"
     
     evaluate_blocking_output(candidate_file, gt_file, TOTAL_S1, TOTAL_S2, TOTAL_S3)
