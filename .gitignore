@@ -65,3 +65,9 @@ htmlcov/
 
 # Logs
 *.log
+data/
+myenv/
+__pycache__/
+*.csv
+*.tsv
+*.json
