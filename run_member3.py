@@ -1,175 +1,48 @@
-import os
+import json
+import sys
+from pathlib import Path
+import pandas as pd
 
-from src.evaluation.evaluate import (
-    evaluate_predictions
-)
+BASE_DIR = Path(__file__).resolve().parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
-from src.evaluation.error_analysis import (
-    perform_error_analysis
-)
+from src.evaluation.evaluate import compute_macro_f05
 
-from src.evaluation.final_mapping import (
-    create_final_mapping
-)
-
-from src.evaluation.visualization import (
-    create_visualizations
-)
-
-
-# ==========================================================
-# PATHS
-# ==========================================================
-
-PREDICTION_FILE = (
-    "output/prediction_details.tsv"
-)
-
-MATCHING_RESULTS_FILE = (
-    "output/matching_results.tsv"
-)
-
-# IMPORTANT:
-# Change this after finding the actual ground-truth file.
-GROUND_TRUTH_FILE = None
-
-RESULTS_DIR = (
-    "results/member3"
-)
+OUTPUT_DIR = BASE_DIR / "output"
+PRED_PATH = OUTPUT_DIR / "prediction_details.tsv"
 
 
 def main():
+    print("============================================")
+    print("      MEMBER 3 - EVALUATION PIPELINE        ")
+    print("============================================")
 
-    print("=" * 60)
-    print("MEMBER 3 - ENTITY RESOLUTION EVALUATION")
-    print("=" * 60)
+    if not PRED_PATH.exists():
+        print(f"[ERROR] Prediction details file not found: {PRED_PATH}")
+        sys.exit(1)
 
-    os.makedirs(
-        RESULTS_DIR,
-        exist_ok=True
-    )
+    print(f"Loading prediction details from: {PRED_PATH}")
+    pred_df = pd.read_csv(PRED_PATH, sep="\t")
 
-    # ------------------------------------------------------
-    # Check Member 2 outputs
-    # ------------------------------------------------------
+    metrics = compute_macro_f05(pred_df, beta=0.5)
 
-    if not os.path.exists(
-        PREDICTION_FILE
-    ):
+    print("\n--------------------------------------------")
+    print("              EVALUATION METRICS            ")
+    print("--------------------------------------------")
+    print(f" Micro Precision : {metrics['micro_precision']:.4f}")
+    print(f" Micro Recall    : {metrics['micro_recall']:.4f}")
+    print(f" Micro F0.5      : {metrics['micro_f0.5']:.4f}")
+    print("--------------------------------------------")
+    print(f" Macro Precision : {metrics['macro_precision']:.4f}")
+    print(f" Macro Recall    : {metrics['macro_recall']:.4f}")
+    print(f" Macro F0.5      : {metrics['macro_f0.5']:.4f}")
+    print("--------------------------------------------\n")
 
-        raise FileNotFoundError(
-            "\nMember 2 prediction file not found:\n"
-            f"{PREDICTION_FILE}\n\n"
-            "Run Member 2's pipeline first."
-        )
-
-    if not os.path.exists(
-        MATCHING_RESULTS_FILE
-    ):
-
-        raise FileNotFoundError(
-            "\nMember 2 matching result not found:\n"
-            f"{MATCHING_RESULTS_FILE}\n\n"
-            "Run Member 2's pipeline first."
-        )
-
-    # ------------------------------------------------------
-    # Ground truth
-    # ------------------------------------------------------
-
-    if GROUND_TRUTH_FILE is None:
-
-        print("\n" + "=" * 60)
-        print("GROUND TRUTH REQUIRED")
-        print("=" * 60)
-
-        print(
-            "\nSet GROUND_TRUTH_FILE in run_member3.py "
-            "to the actual challenge ground-truth file."
-        )
-
-        print(
-            "\nFor example:"
-        )
-
-        print(
-            'GROUND_TRUTH_FILE = '
-            '"data/student_resource/ground_truth.tsv"'
-        )
-
-        print(
-            "\nThe final mapping can still be generated "
-            "without ground truth."
-        )
-
-        create_final_mapping(
-            MATCHING_RESULTS_FILE,
-            RESULTS_DIR
-        )
-
-        return
-
-    # ------------------------------------------------------
-    # Evaluation
-    # ------------------------------------------------------
-
-    evaluation_df, metrics = (
-        evaluate_predictions(
-            PREDICTION_FILE,
-            GROUND_TRUTH_FILE,
-            RESULTS_DIR
-        )
-    )
-
-    # ------------------------------------------------------
-    # Error analysis
-    # ------------------------------------------------------
-
-    perform_error_analysis(
-        evaluation_df,
-        RESULTS_DIR
-    )
-
-    # ------------------------------------------------------
-    # Final entity mapping
-    # ------------------------------------------------------
-
-    create_final_mapping(
-        MATCHING_RESULTS_FILE,
-        RESULTS_DIR
-    )
-
-    # ------------------------------------------------------
-    # Visualizations
-    # ------------------------------------------------------
-
-    create_visualizations(
-        evaluation_df,
-        metrics,
-        RESULTS_DIR
-    )
-
-    # ------------------------------------------------------
-    # Final summary
-    # ------------------------------------------------------
-
-    print("\n" + "=" * 60)
-    print("MEMBER 3 PROCESS COMPLETED")
-    print("=" * 60)
-
-    print("\nGenerated files:")
-
-    for filename in sorted(
-        os.listdir(RESULTS_DIR)
-    ):
-        print(
-            f"  ✓ {filename}"
-        )
-
-    print(
-        "\nResults directory:",
-        RESULTS_DIR
-    )
+    metrics_path = OUTPUT_DIR / "evaluation_metrics.json"
+    with open(metrics_path, "w", encoding="utf-8") as f:
+        json.dump(metrics, f, indent=2)
+    print(f"Saved metrics summary to: {metrics_path}")
 
 
 if __name__ == "__main__":

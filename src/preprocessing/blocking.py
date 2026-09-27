@@ -1,103 +1,75 @@
+from typing import Dict, List
+import numpy as np
 import pandas as pd
-from typing import Dict, List, Tuple
-
-def generate_blocking_keys(row: pd.Series) -> List[str]:
-    """Generates multi-tier blocking keys across name, address, and country."""
-    keys = []
-    name = str(row.get("clean_name", "")).strip()
-    addr = str(row.get("clean_addr", "")).strip()
-    country = str(row.get("country", "")).strip()
-
-    if name:
-        # 1. First word/token of company name
-        tokens = name.split()
-        if tokens:
-            keys.append(f"token_{tokens[0]}")
-            
-        # 2. First 3 non-space characters
-        clean_compact = name.replace(" ", "")
-        if len(clean_compact) >= 3:
-            keys.append(f"prefix_{clean_compact[:3]}")
-            
-        # 3. Country + First Token combination
-        if country and tokens:
-            keys.append(f"geo_{country}_{tokens[0]}")
-
-    if addr:
-        # 4. First token of street address
-        addr_tokens = addr.split()
-        if addr_tokens:
-            keys.append(f"addr_{addr_tokens[0]}")
-
-    return keys
+from scipy.sparse import csr_matrix
+from sklearn.feature_extraction.text import TfidfVectorizer
 
 
-def run_candidate_blocking(
+def generate_candidate_pairs(
     s1_df: pd.DataFrame,
     s23_df: pd.DataFrame,
-    max_candidates_per_entity: int = 50
-) -> Tuple[Dict[str, List[str]], Dict[str, float]]:
-    """
-    Creates candidate pairs using multi-key indexing with a guaranteed candidate fallback.
-    """
-    s1_blocks = {}
-    s23_blocks = {}
+    s1_id_col: str,
+    s23_id_col: str,
+    s1_text_col: str,
+    s23_text_col: str,
+    top_k: int = 5
+) -> Dict[str, List[str]]:
+    """Ultra-fast candidate pair generation using sparse matrix operations without dense conversions."""
+    print("   Extracting text lists...")
+    s1_texts = s1_df[s1_text_col].fillna("").astype(str).tolist()
+    s23_texts = s23_df[s23_text_col].fillna("").astype(str).tolist()
 
-    print("Indexing Source 1 blocks...")
-    for _, row in s1_df.iterrows():
-        s1_id = str(row["entity_id"]).strip()
-        for key in generate_blocking_keys(row):
-            s1_blocks.setdefault(key, set()).add(s1_id)
+    print("   Fitting TF-IDF Vectorizer (max_features=3000)...")
+    vectorizer = TfidfVectorizer(
+        analyzer="word",
+        ngram_range=(1, 1),
+        max_features=3000,
+        sublinear_tf=True
+    )
+    vectorizer.fit(s1_texts + s23_texts)
 
-    print("Indexing Source 2 & 3 blocks...")
-    for _, row in s23_df.iterrows():
-        cand_id = str(row["entity_id"]).strip()
-        for key in generate_blocking_keys(row):
-            s23_blocks.setdefault(key, set()).add(cand_id)
+    X_s1 = vectorizer.transform(s1_texts)
+    X_s23 = vectorizer.transform(s23_texts)
 
-    print("Matching candidate pairs...")
-    candidate_pairs = {str(s1_id).strip(): set() for s1_id in s1_df["entity_id"].unique()}
+    s1_ids = s1_df[s1_id_col].astype(str).str.strip().tolist()
+    s23_ids = s23_df[s23_id_col].astype(str).str.strip().tolist()
 
-    # Match blocks
-    for key, s1_ids in s1_blocks.items():
-        if key in s23_blocks:
-            cand_ids = s23_blocks[key]
-            for s1_id in s1_ids:
-                candidate_pairs[s1_id].update(cand_ids)
+    candidate_pairs = {}
+    batch_size = 5000
+    total_rows = X_s1.shape[0]
 
-    # Fallback Strategy: Assign global sample candidates if blocking produced []
-    s23_ids_list = s23_df["entity_id"].astype(str).str.strip().tolist()
-    default_fallback_cands = set(s23_ids_list[:max_candidates_per_entity])
+    print(f"   Processing {total_rows} rows in batches of {batch_size}...")
 
-    empty_count = 0
-    final_candidates = {}
+    for i in range(0, total_rows, batch_size):
+        end_i = min(i + batch_size, total_rows)
+        batch_s1 = X_s1[i:end_i]
 
-    for s1_id, cands in candidate_pairs.items():
-        if not cands:
-            empty_count += 1
-            final_candidates[s1_id] = list(default_fallback_cands)
-        else:
-            # Cap candidates per entity to avoid explosive memory overhead
-            final_candidates[s1_id] = sorted(list(cands))[:max_candidates_per_entity]
+        # Fast matrix multiplication on sparse matrices
+        sim_matrix: csr_matrix = batch_s1.dot(X_s23.T)
 
-    if empty_count > 0:
-        print(f"[NOTE] Fallback applied for {empty_count} Source 1 entities with 0 initial block matches.")
+        for row_offset in range(end_i - i):
+            global_idx = i + row_offset
+            s1_id = s1_ids[global_idx]
 
-    # Calculate Reduction Ratio Metric
-    num_s1 = len(s1_df)
-    num_s23 = len(s23_df)
-    total_comparisons_possible = num_s1 * num_s23
-    total_candidate_pairs = sum(len(cands) for cands in final_candidates.values())
+            # Extract row non-zero elements fast
+            row_start = sim_matrix.indptr[row_offset]
+            row_end = sim_matrix.indptr[row_offset + 1]
 
-    reduction_ratio = 1.0 - (total_candidate_pairs / float(total_comparisons_possible)) if total_comparisons_possible > 0 else 0.0
+            indices = sim_matrix.indices[row_start:row_end]
+            data = sim_matrix.data[row_start:row_end]
 
-    blocking_stats = {
-        "source1_records": num_s1,
-        "source23_records": num_s23,
-        "max_possible_pairs": total_comparisons_possible,
-        "generated_candidate_pairs": total_candidate_pairs,
-        "reduction_ratio": round(reduction_ratio, 6),
-        "reduction_ratio_pct": f"{round(reduction_ratio * 100, 4)}%"
-    }
+            if len(data) == 0:
+                # Fallback: assign first top_k IDs if no TF-IDF overlap
+                candidate_pairs[s1_id] = s23_ids[:top_k]
+            elif len(data) <= top_k:
+                sorted_idx = indices[np.argsort(-data)]
+                candidate_pairs[s1_id] = [s23_ids[idx] for idx in sorted_idx]
+            else:
+                top_part = np.argpartition(data, -top_k)[-top_k:]
+                sorted_idx = indices[top_part[np.argsort(-data[top_part])]]
+                candidate_pairs[s1_id] = [s23_ids[idx] for idx in sorted_idx]
 
-    return final_candidates, blocking_stats
+        if (i + batch_size) % 25000 < batch_size or end_i == total_rows:
+            print(f"   Processed {end_i}/{total_rows} rows...")
+
+    return candidate_pairs

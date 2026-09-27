@@ -1,44 +1,31 @@
 import Levenshtein
-import numpy as np
 import pandas as pd
 
 
 def jaccard_similarity(str1: str, str2: str) -> float:
     set1, set2 = set(str1.split()), set(str2.split())
     union = set1.union(set2)
-    if not union:
-        return 0.0
-    return len(set1.intersection(set2)) / len(union)
+    return len(set1.intersection(set2)) / len(union) if union else 0.0
 
 
 def character_ngram_jaccard(str1: str, str2: str, n: int = 3) -> float:
     def get_ngrams(s, n):
-        return set([s[i:i+n] for i in range(len(s) - n + 1)])
-    
-    ngrams1 = get_ngrams(str1, n)
-    ngrams2 = get_ngrams(str2, n)
-    union = ngrams1.union(ngrams2)
-    if not union:
-        return 0.0
-    return len(ngrams1.intersection(ngrams2)) / len(union)
+        return set([s[i : i + n] for i in range(len(s) - n + 1)])
+
+    ng1, ng2 = get_ngrams(str1, n), get_ngrams(str2, n)
+    union = ng1.union(ng2)
+    return len(ng1.intersection(ng2)) / len(union) if union else 0.0
 
 
 def extract_pair_features(s1_row: pd.Series, s23_row: pd.Series) -> dict:
-    s1_name = str(s1_row.get("name", "") or s1_row.get("title", "")).lower().strip()
-    s23_name = str(s23_row.get("name", "") or s23_row.get("title", "")).lower().strip()
+    s1_name = str(s1_row.get("name", "") or s1_row.get("title", "") or s1_row.get("company_name", "")).lower().strip()
+    s23_name = str(s23_row.get("name", "") or s23_row.get("title", "") or s23_row.get("company_name", "")).lower().strip()
 
-    # Exact Match
     exact_match = 1.0 if s1_name == s23_name and len(s1_name) > 0 else 0.0
-
-    # Token & Character Jaccard
     jaccard_tok = jaccard_similarity(s1_name, s23_name)
     jaccard_3gram = character_ngram_jaccard(s1_name, s23_name, n=3)
-
-    # Levenshtein Distance & Ratio
     lev_dist = Levenshtein.distance(s1_name, s23_name)
     lev_ratio = Levenshtein.ratio(s1_name, s23_name)
-
-    # Length Ratios
     len_diff = abs(len(s1_name) - len(s23_name))
     len_ratio = min(len(s1_name), len(s23_name)) / max(len(s1_name), len(s23_name), 1)
 
