@@ -1,6 +1,6 @@
-import csv
 import json
 import sys
+from collections import defaultdict
 from pathlib import Path
 import pandas as pd
 
@@ -8,11 +8,34 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from src.preprocessing.cleaning import preprocess_dataframe
-from src.preprocessing.blocking import generate_candidate_pairs
+# Primary and fallback paths for student resource directory structure
+PRIMARY_DATA_DIR = BASE_DIR / "data" / "student_resource" / "dataset"
+FALLBACK_DATA_DIR = BASE_DIR / "dataset"
 
-DATA_DIR = BASE_DIR / "data"
 OUTPUT_DIR = BASE_DIR / "output"
+
+
+def resolve_data_dir() -> Path:
+    if PRIMARY_DATA_DIR.exists():
+        return PRIMARY_DATA_DIR
+    elif FALLBACK_DATA_DIR.exists():
+        return FALLBACK_DATA_DIR
+    return PRIMARY_DATA_DIR
+
+
+def load_and_combine_sources(s2_path: Path, s3_path: Path) -> pd.DataFrame:
+    dfs = []
+    if s2_path.exists():
+        print(f"Loading Test Source 2: {s2_path}")
+        dfs.append(pd.read_csv(s2_path, sep="\t", dtype=str).fillna(""))
+    if s3_path.exists():
+        print(f"Loading Test Source 3: {s3_path}")
+        dfs.append(pd.read_csv(s3_path, sep="\t", dtype=str).fillna(""))
+
+    if not dfs:
+        raise FileNotFoundError(f"Neither {s2_path} nor {s3_path} was found!")
+
+    return pd.concat(dfs, ignore_index=True)
 
 
 def detect_column(df: pd.DataFrame, candidates: list) -> str:
@@ -24,70 +47,76 @@ def detect_column(df: pd.DataFrame, candidates: list) -> str:
 
 def main():
     print("============================================")
-    print("     MEMBER 1 - DATA CLEANING & BLOCKING   ")
+    print("   MEMBER 1 - CANDIDATE BLOCKING (TEST)     ")
     print("============================================")
 
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    data_dir = resolve_data_dir()
 
-    s1_raw_path = DATA_DIR / "source1.csv"
-    s23_raw_path = DATA_DIR / "source23.csv"
+    test_s1_path = data_dir / "test" / "test_source1.tsv"
+    test_s2_path = data_dir / "test" / "test_source2.tsv"
+    test_s3_path = data_dir / "test" / "test_source3.tsv"
 
-    if not s1_raw_path.exists():
-        s1_raw_path = DATA_DIR / "source1_clean.csv"
-    if not s23_raw_path.exists():
-        s23_raw_path = DATA_DIR / "source23_clean.csv"
-
-    if not s1_raw_path.exists() or not s23_raw_path.exists():
-        print(f"[ERROR] Source files missing in {DATA_DIR}!")
+    if not test_s1_path.exists():
+        print(f"[ERROR] Test dataset missing at: {test_s1_path}")
         sys.exit(1)
 
-    print(f"Loading raw datasets from:\n - {s1_raw_path}\n - {s23_raw_path}")
-    s1_df = pd.read_csv(s1_raw_path, dtype=str, on_bad_lines="skip", engine="python").fillna("")
-    s23_df = pd.read_csv(s23_raw_path, dtype=str, on_bad_lines="skip", engine="python").fillna("")
+    print(f"Loading Test Source 1: {test_s1_path}")
+    s1_df = pd.read_csv(test_s1_path, sep="\t", dtype=str).fillna("")
 
-    s1_id_col = detect_column(s1_df, ["entity_id", "source1_entity_id", "s1_id", "id"])
-    s23_id_col = detect_column(s23_df, ["entity_id", "source23_entity_id", "s23_id", "id"])
+    s23_df = load_and_combine_sources(test_s2_path, test_s3_path)
 
-    name_cols = ["name", "title", "company_name", "clean_name"]
-    s1_name_col = detect_column(s1_df, name_cols)
-    s23_name_col = detect_column(s23_df, name_cols)
+    s1_id_col = detect_column(s1_df, ["source1_entity_id", "entity_id", "id"])
+    s23_id_col = detect_column(s23_df, ["source23_entity_id", "entity_id", "id"])
 
-    s1_df[s1_id_col] = s1_df[s1_id_col].astype(str).str.strip()
-    s23_df[s23_id_col] = s23_df[s23_id_col].astype(str).str.strip()
+    s1_text_col = detect_column(s1_df, ["name", "clean_name", "title", "address"])
+    s23_text_col = detect_column(s23_df, ["name", "clean_name", "title", "address"])
 
-    print("Cleaning text fields...")
-    s1_clean = preprocess_dataframe(s1_df, text_cols=[c for c in s1_df.columns if c != s1_id_col])
-    s23_clean = preprocess_dataframe(s23_df, text_cols=[c for c in s23_df.columns if c != s23_id_col])
+    print(f"Total Test S1 Records: {len(s1_df)}")
+    print(f"Total Test S2/3 Records: {len(s23_df)}")
 
-    s1_clean.to_csv(DATA_DIR / "source1_clean.csv", index=False, quoting=csv.QUOTE_MINIMAL, encoding="utf-8")
-    s23_clean.to_csv(DATA_DIR / "source23_clean.csv", index=False, quoting=csv.QUOTE_MINIMAL, encoding="utf-8")
+    print("\nBuilding inverted token index for Source 2/3...")
+    s23_ids = s23_df[s23_id_col].astype(str).str.strip().values
+    s23_texts = s23_df[s23_text_col].astype(str).str.lower().values
 
-    print("\nGenerating candidate pairs via Blocking/TF-IDF...")
-    candidate_pairs = generate_candidate_pairs(
-        s1_clean, s23_clean, s1_id_col, s23_id_col, s1_name_col, s23_name_col, top_k=5
-    )
+    s1_ids = s1_df[s1_id_col].astype(str).str.strip().values
+    s1_texts = s1_df[s1_text_col].astype(str).str.lower().values
 
-    # Save JSON for training script
-    pairs_json_path = DATA_DIR / "candidate_pairs.json"
-    with open(pairs_json_path, "w", encoding="utf-8") as f:
-        json.dump(candidate_pairs, f, indent=2)
+    token_index = defaultdict(list)
+    for idx, text in enumerate(s23_texts):
+        for token in set(text.split()):
+            if len(token) > 2:
+                token_index[token].append(idx)
 
-    # Save output/candidate_pairs.tsv as required by challenge guidelines
-    candidate_tsv_rows = []
-    for s1_id, c_list in candidate_pairs.items():
-        candidate_tsv_rows.append({
-            "source1_entity_id": s1_id,
-            "candidate_entity_ids": ",".join(c_list)
-        })
+    print("Matching candidate pairs for Test Source 1...")
+    candidate_pairs = {}
+    top_k = 5
 
-    cand_df = pd.DataFrame(candidate_tsv_rows)
-    cand_tsv_path = OUTPUT_DIR / "candidate_pairs.tsv"
-    cand_df.to_csv(cand_tsv_path, sep="\t", index=False, quoting=csv.QUOTE_NONE)
+    for i, s1_id in enumerate(s1_ids):
+        tokens = [t for t in set(s1_texts[i].split()) if len(t) > 2]
 
-    print(f"Saved {len(candidate_pairs)} candidate pair mappings to:\n - {pairs_json_path}\n - {cand_tsv_path}")
-    print("\n============================================")
-    print("        MEMBER 1 PIPELINE COMPLETE         ")
+        matches = []
+        for t in tokens:
+            if t in token_index:
+                matches.extend(token_index[t])
+
+        if not matches:
+            candidate_pairs[s1_id] = []
+        else:
+            freq = defaultdict(int)
+            for m in matches:
+                freq[m] += 1
+            top_indices = sorted(freq, key=freq.get, reverse=True)[:top_k]
+            candidate_pairs[s1_id] = [s23_ids[idx] for idx in top_indices]
+
+    pairs_path = OUTPUT_DIR / "candidate_pairs_test.json"
+    with open(pairs_path, "w", encoding="utf-8") as f:
+        json.dump(candidate_pairs, f)
+
+    s1_df.to_csv(OUTPUT_DIR / "test_s1_clean.csv", index=False)
+    s23_df.to_csv(OUTPUT_DIR / "test_s23_clean.csv", index=False)
+
+    print(f"\nSaved test candidate pairs to: {pairs_path}")
     print("============================================\n")
 
 

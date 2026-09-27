@@ -1,8 +1,5 @@
 from typing import Dict, List
-import numpy as np
 import pandas as pd
-from scipy.sparse import csr_matrix
-from sklearn.feature_extraction.text import TfidfVectorizer
 
 
 def generate_candidate_pairs(
@@ -14,62 +11,55 @@ def generate_candidate_pairs(
     s23_text_col: str,
     top_k: int = 5
 ) -> Dict[str, List[str]]:
-    """Generates distinct candidate pairs using Fast Character N-gram TF-IDF blocking."""
-    print("   Extracting text lists...")
-    s1_texts = s1_df[s1_text_col].fillna("").astype(str).tolist()
-    s23_texts = s23_df[s23_text_col].fillna("").astype(str).tolist()
+    """C-accelerated vectorized inverted index blocking with explicit column renaming."""
+    print("   Preparing token dataframes...")
+    
+    # 1. Extract IDs and split text fields into clean word tokens
+    s1_sub = s1_df[[s1_id_col, s1_text_col]].dropna().copy()
+    s23_sub = s23_df[[s23_id_col, s23_text_col]].dropna().copy()
 
-    # Use char_wb (3-grams) for robust string matching across noise/typos
-    print("   Fitting TF-IDF Vectorizer (char_wb, 3-grams)...")
-    vectorizer = TfidfVectorizer(
-        analyzer="char_wb",
-        ngram_range=(3, 3),
-        max_features=25000,
-        sublinear_tf=True
+    # Rename ID columns explicitly to prevent merge collision (_x / _y)
+    s1_sub = s1_sub.rename(columns={s1_id_col: "s1_id"})
+    s23_sub = s23_sub.rename(columns={s23_id_col: "s23_id"})
+
+    s1_sub["token"] = s1_sub[s1_text_col].astype(str).str.split()
+    s23_sub["token"] = s23_sub[s23_text_col].astype(str).str.split()
+
+    # 2. Explode token arrays into rows
+    print("   Exploding token lists for Source 1 & Source 2/3...")
+    s1_exploded = s1_sub.explode("token")
+    s23_exploded = s23_sub.explode("token")
+
+    # Filter out empty strings and short noise words (< 3 chars)
+    s1_exploded = s1_exploded[s1_exploded["token"].str.len() > 2][["s1_id", "token"]].drop_duplicates()
+    s23_exploded = s23_exploded[s23_exploded["token"].str.len() > 2][["s23_id", "token"]].drop_duplicates()
+
+    # 3. Vectorized merge on token equality
+    print("   Merging records on token overlaps...")
+    matches = pd.merge(s1_exploded, s23_exploded, on="token", how="inner")
+
+    # 4. Count token overlaps per pair and extract Top-K candidates
+    print("   Aggregating candidate counts...")
+    pair_counts = (
+        matches.groupby(["s1_id", "s23_id"], sort=False)
+        .size()
+        .reset_index(name="overlap_count")
     )
-    vectorizer.fit(s1_texts + s23_texts)
 
-    X_s1 = vectorizer.transform(s1_texts)
-    X_s23 = vectorizer.transform(s23_texts)
+    # Sort by overlap and retain top K candidates per s1_id
+    pair_counts = pair_counts.sort_values(["s1_id", "overlap_count"], ascending=[True, False])
+    top_candidates = pair_counts.groupby("s1_id").head(top_k)
 
-    s1_ids = s1_df[s1_id_col].astype(str).str.strip().tolist()
-    s23_ids = s23_df[s23_id_col].astype(str).str.strip().tolist()
+    # Group candidate IDs into list format
+    candidate_pairs_map = (
+        top_candidates.groupby("s1_id")["s23_id"]
+        .apply(list)
+        .to_dict()
+    )
 
-    candidate_pairs = {}
-    batch_size = 5000
-    total_rows = X_s1.shape[0]
-
-    print(f"   Processing {total_rows} rows in batches of {batch_size}...")
-
-    for i in range(0, total_rows, batch_size):
-        end_i = min(i + batch_size, total_rows)
-        batch_s1 = X_s1[i:end_i]
-
-        # Fast sparse matrix multiplication
-        sim_matrix: csr_matrix = batch_s1.dot(X_s23.T)
-
-        for row_offset in range(end_i - i):
-            global_idx = i + row_offset
-            s1_id = s1_ids[global_idx]
-
-            row_start = sim_matrix.indptr[row_offset]
-            row_end = sim_matrix.indptr[row_offset + 1]
-
-            indices = sim_matrix.indices[row_start:row_end]
-            data = sim_matrix.data[row_start:row_end]
-
-            if len(data) == 0:
-                # If no char n-gram overlap, return EMPTY list (do NOT default to global top 5)
-                candidate_pairs[s1_id] = []
-            elif len(data) <= top_k:
-                sorted_idx = indices[np.argsort(-data)]
-                candidate_pairs[s1_id] = [s23_ids[idx] for idx in sorted_idx]
-            else:
-                top_part = np.argpartition(data, -top_k)[-top_k:]
-                sorted_idx = indices[top_part[np.argsort(-data[top_part])]]
-                candidate_pairs[s1_id] = [s23_ids[idx] for idx in sorted_idx]
-
-        if (i + batch_size) % 25000 < batch_size or end_i == total_rows:
-            print(f"   Processed {end_i}/{total_rows} rows...")
+    # Fill empty candidate lists for S1 IDs with no token matches
+    print("   Finalizing candidate mapping...")
+    all_s1_ids = s1_df[s1_id_col].astype(str).str.strip().unique()
+    candidate_pairs = {s1_id: candidate_pairs_map.get(s1_id, []) for s1_id in all_s1_ids}
 
     return candidate_pairs
