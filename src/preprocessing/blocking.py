@@ -14,16 +14,17 @@ def generate_candidate_pairs(
     s23_text_col: str,
     top_k: int = 5
 ) -> Dict[str, List[str]]:
-    """Ultra-fast candidate pair generation using sparse matrix operations without dense conversions."""
+    """Generates distinct candidate pairs using Fast Character N-gram TF-IDF blocking."""
     print("   Extracting text lists...")
     s1_texts = s1_df[s1_text_col].fillna("").astype(str).tolist()
     s23_texts = s23_df[s23_text_col].fillna("").astype(str).tolist()
 
-    print("   Fitting TF-IDF Vectorizer (max_features=3000)...")
+    # Use char_wb (3-grams) for robust string matching across noise/typos
+    print("   Fitting TF-IDF Vectorizer (char_wb, 3-grams)...")
     vectorizer = TfidfVectorizer(
-        analyzer="word",
-        ngram_range=(1, 1),
-        max_features=3000,
+        analyzer="char_wb",
+        ngram_range=(3, 3),
+        max_features=25000,
         sublinear_tf=True
     )
     vectorizer.fit(s1_texts + s23_texts)
@@ -44,14 +45,13 @@ def generate_candidate_pairs(
         end_i = min(i + batch_size, total_rows)
         batch_s1 = X_s1[i:end_i]
 
-        # Fast matrix multiplication on sparse matrices
+        # Fast sparse matrix multiplication
         sim_matrix: csr_matrix = batch_s1.dot(X_s23.T)
 
         for row_offset in range(end_i - i):
             global_idx = i + row_offset
             s1_id = s1_ids[global_idx]
 
-            # Extract row non-zero elements fast
             row_start = sim_matrix.indptr[row_offset]
             row_end = sim_matrix.indptr[row_offset + 1]
 
@@ -59,8 +59,8 @@ def generate_candidate_pairs(
             data = sim_matrix.data[row_start:row_end]
 
             if len(data) == 0:
-                # Fallback: assign first top_k IDs if no TF-IDF overlap
-                candidate_pairs[s1_id] = s23_ids[:top_k]
+                # If no char n-gram overlap, return EMPTY list (do NOT default to global top 5)
+                candidate_pairs[s1_id] = []
             elif len(data) <= top_k:
                 sorted_idx = indices[np.argsort(-data)]
                 candidate_pairs[s1_id] = [s23_ids[idx] for idx in sorted_idx]

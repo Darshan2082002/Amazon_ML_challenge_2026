@@ -54,6 +54,9 @@ def main():
     s1_df[s1_id_col] = s1_df[s1_id_col].astype(str).str.strip()
     s23_df[s23_id_col] = s23_df[s23_id_col].astype(str).str.strip()
 
+    # FULL LIST OF ALL S1 ENTITY IDs FROM THE ORIGINAL DATASET
+    all_s1_ids_df = pd.DataFrame({"source1_entity_id": s1_df[s1_id_col].unique()})
+
     s1_dict = s1_df.set_index(s1_id_col).to_dict(orient="index")
     s23_dict = s23_df.set_index(s23_id_col).to_dict(orient="index")
 
@@ -84,8 +87,8 @@ def main():
     X = feature_df[feature_cols]
     y = feature_df["true_label"]
 
-    X_train, X_val, y_train, y_val, df_train, df_val = train_test_split(
-        X, y, feature_df, test_size=0.2, random_state=42, stratify=y if len(np.unique(y)) > 1 else None
+    X_train, X_val, y_train, y_val = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y if len(np.unique(y)) > 1 else None
     )
 
     print("\nTraining LightGBM Classifier...")
@@ -105,8 +108,8 @@ def main():
     pred_path = OUTPUT_DIR / "prediction_details.tsv"
     feature_df[["source1_entity_id", "source23_entity_id", "true_label", "predicted_match", "match_probability"]].to_csv(pred_path, sep="\t", index=False)
 
-    # FORMAT EXACT LEADERBOARD SUBMISSION: output/matching_results.tsv
-    print("\nFormatting output/matching_results.tsv...")
+    # FORMAT EXACT SUBMISSION: output/matching_results.tsv
+    print("\nFormatting output/matching_results.tsv with ALL S1 entities...")
     matched_only = feature_df[feature_df["predicted_match"] == 1]
     
     # Group matched entity_ids by source1_entity_id
@@ -117,14 +120,13 @@ def main():
         .rename(columns={"source23_entity_id": "matched_entity_ids"})
     )
 
-    # Outer join to ensure every source1_entity_id is present
-    all_s1_ids = pd.DataFrame({"source1_entity_id": list(candidate_pairs.keys())})
-    submission_df = pd.merge(all_s1_ids, grouped_matches, on="source1_entity_id", how="left").fillna("")
+    # MERGE WITH ALL S1 ENTITY IDs FROM THE SOURCE DATASET
+    submission_df = pd.merge(all_s1_ids_df, grouped_matches, on="source1_entity_id", how="left").fillna("")
 
     matching_tsv_path = OUTPUT_DIR / "matching_results.tsv"
     submission_df.to_csv(matching_tsv_path, sep="\t", index=False, quoting=csv.QUOTE_NONE)
 
-    print(f"Saved required submission files to:\n - {matching_tsv_path}\n - {OUTPUT_DIR / 'candidate_pairs.tsv'}")
+    print(f"Successfully generated full submission for {len(submission_df)} S1 entities at:\n - {matching_tsv_path}")
     print("\n============================================")
     print("        MEMBER 2 TRAINING COMPLETE         ")
     print("============================================\n")
